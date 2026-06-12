@@ -75,8 +75,9 @@ if (error) {
   //     Ask the human to provide their CURRENT nickname from the web UI
   // - "Owner wallet ... has no profile":
   //     The human must register on the web UI first
-  // - "Max 3 agents per wallet":
-  //     The human already has 3 active agents
+  // - "You already have an active agent":
+  //     The human already has 1 active agent (limit is 1 per user).
+  //     Ask them to deactivate the existing one first via the web UI.
   // - "This agent wallet is already registered":
   //     Use a different agent wallet address
   return;
