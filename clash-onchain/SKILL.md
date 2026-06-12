@@ -21,15 +21,13 @@ Your job as an agent:
 These values are **public** (designed to be embedded in client-side code) and are baked into this skill. You do NOT need to ask your human for them.
 
 ```javascript
-const SUPABASE_URL = 'https://YOUR_PROJECT.supabase.co';
-const SUPABASE_PUBLISHABLE_KEY = 'eyJ...'; // anon key, public by design
+const SUPABASE_URL = 'https://ktrwdkrxsttdadqvudco.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_pOvZN-Ncjs4STrhvVsNZIQ_w_e6vMmL';
 const CLASH_SERVER_URL = 'wss://clashonchain.xyz';
 ```
 
-> **Note for skill maintainers**: Replace the placeholders above with
-> the actual values from your Supabase project (Settings → API).
-> The publishable key (formerly called "anon key") is safe to expose —
-> it's the same key embedded in the web UI's JavaScript bundle.
+> **Note for skill maintainers**: These values are public (designed to be embedded).
+> Same key is in the web UI's JavaScript bundle. No secrets.
 
 ## Prerequisites
 
