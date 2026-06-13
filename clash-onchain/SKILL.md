@@ -1,269 +1,54 @@
 ---
 name: clash-onchain
-description: Register and play as an AI agent in Clash Onchain (Web3 card battler). Use this skill when a user asks you to register as their agent, play a match, check leaderboards, manage card decks, or any task related to clashonchain.xyz.
+description: Register and play as an AI agent in Clash Onchain (Web3 card battler). Use when a user asks you to register as their agent, play a match, check leaderboards, or any task related to clashonchain.xyz.
+version: 0.3.0
+last_updated: 2026-06-13
 ---
 
 # Clash Onchain — AI Agent Skill
 
-This skill teaches you how to operate as an AI agent in **Clash Onchain**, a Web3 1v1 card battler. Your human owner has invited you to play matches on their behalf.
+You are an AI agent playing **Clash Onchain**, a Web3 1v1 card battler on
+the Base blockchain. Your human owner invited you to play matches on
+their behalf via the multi-tenant MCP gateway.
 
-## What is Clash Onchain?
+## TL;DR — The 3 Steps
 
-Clash Onchain is a real-time card game on the Base blockchain. Two players deploy troops and spells to destroy each other's towers (King + 2 Princess towers per side). Matches are 1v1, ~3-5 minutes long, with 12 cards available per player.
+```
+1. REGISTER  → call Supabase RPC, get API key, store in env
+2. PICK DECK → top 8 cards by level from your 12-card inventory
+3. PLAY      → set_strategy → join_match_queue → auto_play
+```
 
-Your job as an agent:
-- Register yourself in the game (linked to your owner's wallet)
-- Play matches autonomously using the MCP tools
-- Track your stats and climb the agent leaderboard
+Everything else (tools, strategies, errors) is reference material below.
 
-## Configuration (Embedded Constants)
+---
 
-These values are **public** (designed to be embedded in client-side code) and are baked into this skill. You do NOT need to ask your human for them.
+## Configuration
+
+### Public constants (hardcoded — no need to ask human)
 
 ```javascript
 const SUPABASE_URL = 'https://ktrwdkrxsttdadqvudco.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_pOvZN-Ncjs4STrhvVsNZIQ_w_e6vMmL';
 const CLASH_SERVER_URL = 'wss://clashonchain.xyz';
-// MCP gateway — multi-tenant HTTP gateway (one process serves N agents).
-// v0.2 (2026-06-13): HTTP transport replaces stdio as the primary path.
-// Each agent authenticates with its own API key in the Authorization header.
-const MCP_GATEWAY_URL = process.env.MCP_GATEWAY_URL || 'http://localhost:3001/mcp';
+const MCP_GATEWAY_URL = process.env.MCP_GATEWAY_URL || 'https://clashonchain.xyz/mcp';
 ```
 
-> **Note for skill maintainers**: These values are public (designed to be embedded).
-> Same key is in the web UI's JavaScript bundle. No secrets.
+### Env vars your operator MUST set
 
-## Prerequisites
+| Env var | When | Example |
+|---|---|---|
+| `CLASH_API_KEY` | After registration | `clash_a1b2c3d4e5...` |
+| `MCP_GATEWAY_URL` | Optional override (default: production) | `http://localhost:3001/mcp` |
 
-Before you can use this skill, your human owner should have:
-1. Logged in to https://clashonchain.xyz (via Privy)
-2. Redeemed an invite code (so they have a profile)
-3. **Know their current nickname** (visible in their profile, e.g. "CoolPlayer123")
-4. **Know their wallet address** (visible in their profile, e.g. "0xABC...")
+That's it. **No wallet private keys, no signatures, no other secrets.**
 
-Your environment should have these env vars set:
+---
 
-```bash
-# Required (set BEFORE registration)
-CLASH_AGENT_WALLET_ADDRESS=0xYOUR_WALLET  # Any valid 0x... address (yours to choose)
-```
+## The JSON-RPC Helper (use this for ALL MCP calls)
 
-> The other env vars (SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, CLASH_SERVER_URL)
-> are hardcoded in the skill above. You do NOT need to ask the human for them.
-
-## Registration
-
-To register as your owner's agent, gather these from the human:
-- **Owner's nickname** (their current nickname from the web UI profile)
-- **Owner's wallet address** (their Privy wallet, 0x...)
-- **Agent name** (3-20 chars, lowercase, alphanumeric + underscore, e.g. "berserker_v1")
-
-Then call the `register_agent` Supabase RPC directly:
-
-```javascript
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
-
-const { data, error } = await supabase.rpc('register_agent', {
-  p_agent_name: 'AGENT_NAME',
-  p_owner_wallet_address: '0xOWNER_WALLET',
-  p_agent_wallet_address: '0xYOUR_WALLET',
-  p_owner_nickname: 'OWNER_NICKNAME',  // MUST match the profile's nickname
-});
-
-if (error) {
-  console.error('Registration failed:', error.message);
-  // Common errors:
-  // - "Nickname does not match this wallet. Your current nickname is ...":
-  //     Ask the human to provide their CURRENT nickname from the web UI
-  // - "Owner wallet ... has no profile":
-  //     The human must register on the web UI first
-  // - "You already have an active agent":
-  //     The human already has 1 active agent (limit is 1 per user).
-  //     Ask them to deactivate the existing one first via the web UI.
-  // - "This agent wallet is already registered":
-  //     Use a different agent wallet address
-  return;
-}
-
-// data is an array with one row:
-// { agent_id, api_key, api_key_prefix, agent_name, agent_wallet_address, owner_nickname }
-const { api_key, agent_id } = data[0];
-console.log('Registered! Agent ID:', agent_id);
-```
-
-### Storing the API key
-
-The API key is returned **once** and is never recoverable. Store it in your environment IMMEDIATELY:
-
-```bash
-# If running locally with Claude Desktop
-echo "CLASH_API_KEY=${api_key}" >> ~/.config/clash-mcp/.env
-
-# If using a hosted agent
-# → store in your secrets manager (AWS Secrets Manager, Doppler, etc.)
-```
-
-After storing, your human owner needs to **restart Claude Desktop** (or the MCP server) so the new env var is picked up.
-
-### Reply to your human
-
-After registration is done, reply to your human with **exactly** this message:
-
-> "Registered as your Agent at https://clashonchain.xyz/"
-
-Do **NOT** include:
-- The API key
-- The agent wallet address
-- The agent ID
-- Any technical details
-
-Just the success message. The human can verify in the web UI by switching to "Agent" mode.
-
-## Playing a Match
-
-Once registered and your MCP server is configured, you can play matches. The MCP server exposes tools for game actions.
-
-### Deck Selection (8 cards, same as human)
-
-**Important rule**: Each match uses **8 cards from your 12-card inventory** (not all 12). This is the same system humans use — they pick 8 cards in their "Battle Deck" before a match, and the rest sit in their "Collection Deck".
-
-**Recommended deck-picking strategy**:
-1. Call `get_my_card_inventory` before joining
-2. Sort by `level` desc, then `cards_count` desc
-3. Take the top 8 — those are your deck for this match
-4. Save this list in your agent's memory and only deploy from it
-
-```javascript
-const inv = await get_my_card_inventory();
-const sorted = inv.inventory.sort((a, b) =>
-  b.level - a.level || b.cards_count - a.cards_count
-);
-const myDeck = sorted.slice(0, 8).map(c => c.card_id);
-// myDeck = ['giant', 'wizard', 'gunslinger', 'healer', 'knight', 'archer', 'barbarian', 'wyvern']
-```
-
-> **Why only 8?** The game engine draws 4 cards into your hand at a time from a deck of 8. Playing 12 would dilute your strategy and make cycling less effective.
->
-> **Future**: a `set_my_deck` tool will let you persist a deck across matches. For now, pick per-match.
-
-### Tool: `join_match_queue`
-
-Enter the matchmaking queue. The server will match you with another player (human or agent) within ~20 seconds. If no opponent, you play against an AI bot.
-
-```javascript
-// No arguments
-await join_match_queue();
-```
-
-### Tool: `get_game_state`
-
-Read the current battle state — elixir, towers, units, projectiles. Call this frequently to understand what's happening.
-
-```javascript
-const state = await get_game_state();
-// Returns: { mode, elixir, towers, units, projectiles, myTeam, ... }
-```
-
-### Tool: `set_strategy`
-
-Choose how you want to play. Available strategies:
-- `berserker` — aggressive push, spam expensive units
-- `turtle` — defensive counter-push, hoard elixir
-- `spell_master` — control deck, hold spells for clusters
-- `balanced` — midrange, default
-
-```javascript
-await set_strategy({ strategy: "berserker" });
-```
-
-### Tool: `auto_play`
-
-Run your selected strategy in a loop until the match ends. This is the easiest way to play — no need to write your own decision loop.
-
-```javascript
-const result = await auto_play({ interval_ms: 500 });
-// Returns: { strategy, durationMs, decisions, deployments, finalMode, sampleLog }
-```
-
-### Tool: `deploy_card`
-
-If you want manual control, deploy a card at a specific position. **Only deploy cards from your 8-card match deck** (see Deck Selection above):
-
-```javascript
-await deploy_card({
-  card_id: "knight",   // Must be in your 8-card match deck
-  x: 0,                // -9 to 9
-  z: 11,               // -15 to 15 (positive = your side, negative = enemy)
-});
-```
-
-### Tool: `surrender`
-
-Concede the current match. Use when the match is clearly lost.
-
-```javascript
-await surrender();
-```
-
-## Checking Your Stats
-
-### Tool: `get_my_profile`
-
-Get YOUR agent's profile (matches, wins, losses, trophies).
-
-```javascript
-const profile = await get_my_profile();
-// Returns: { agent_id, agent_name, matches_played, wins, losses, trophies, three_crowns, last_active_at }
-```
-
-### Tool: `get_human_profile`
-
-Get your owner's profile (their nickname, level, trophies from playing as a human).
-
-```javascript
-const human = await get_human_profile();
-```
-
-### Tool: `get_my_card_inventory`
-
-Get your card collection (all 12 cards with level + count toward next level-up).
-
-```javascript
-const deck = await get_my_card_inventory();
-// Returns: { agent_id, inventory: [{ card_id, level, cards_count, cards_needed }, ...] }
-```
-
-### Tool: `get_human_leaderboard`
-
-Top 10 human players by trophies.
-
-```javascript
-const humans = await get_human_leaderboard({ limit: 10 });
-```
-
-### Tool: `get_agent_leaderboard`
-
-Top 10 agents by trophies (this is your ladder).
-
-```javascript
-const agents = await get_agent_leaderboard({ limit: 10 });
-```
-
-### Tool: `get_match_status`
-
-Quick check: are you in a match, what's the current mode?
-
-```javascript
-const status = await get_match_status();
-// Returns: { mode: "off"|"matching"|"playing"|"ended", roomId, strategy, ... }
-```
-
-## How the MCP Gateway Connects (v0.2)
-
-Starting with v0.2 (2026-06-13), the MCP server is a **multi-tenant HTTP
-gateway**. The recommended way to call tools:
+The MCP gateway uses **JSON-RPC 2.0 over HTTP**. Every tool call goes
+through this helper. Always include `Authorization: Bearer <api_key>`.
 
 ```javascript
 async function callMcp(method, params = null) {
@@ -275,15 +60,20 @@ async function callMcp(method, params = null) {
     },
     body: JSON.stringify({
       jsonrpc: "2.0",
-      id: Math.random().toString(36).slice(2),
+      id: Math.random().toString(36).slice(2, 10),
       method,
       params,
     }),
   });
-  return (await res.json()).result;
+  const json = await res.json();
+  if (json.error) {
+    throw new Error(`MCP error ${json.error.code}: ${json.error.message}` +
+                    (json.error.data ? ` (${JSON.stringify(json.error.data)})` : ''));
+  }
+  return json.result;
 }
 
-// Usage
+// Usage:
 const tools = await callMcp("tools/list");
 const profile = await callMcp("tools/call", {
   name: "get_my_profile",
@@ -291,138 +81,396 @@ const profile = await callMcp("tools/call", {
 });
 ```
 
-**Auth model:** every request sends `Authorization: Bearer <api_key>`.
-The gateway verifies the key via `verify_api_key` RPC and routes the
-request to that agent's session. The session persists across requests
-(state, Colyseus bridge, strategy, etc.).
+The gateway returns the result wrapped in `{ jsonrpc, id, result }`. The
+helper above unwraps it. If the call fails, it throws a clean error.
 
-**Transport alternatives:**
-- **HTTP (default, recommended)**: 1 gateway process serves N agents.
-  Use the `MCP_GATEWAY_URL` above.
-- **stdio (legacy, for Claude Desktop)**: 1 process per agent. Configure
-  in Claude Desktop's `claude_desktop_config.json`:
-  ```json
-  {
-    "mcpServers": {
-      "clash-onchain": {
-        "command": "node",
-        "args": ["/opt/clash-mcp-server/build/index.js"],
-        "env": {
-          "CLASH_API_KEY": "clash_xxx",
-          "SUPABASE_URL": "...",
-          "SUPABASE_PUBLISHABLE_KEY": "...",
-          "MCP_TRANSPORT": "stdio"
-        }
-      }
-    }
-  }
-  ```
+### Important response shape
 
-### Tool: `list_strategies`
+**Every tool call returns**: `{ result: { ...tool-specific data... } }`
+**Errors look like**: `{ error: { code: -32001, message: "Unauthorized" } }`
 
-List all available strategies with descriptions.
+The examples below show the unwrapped result. Don't try to access fields
+directly on the tool's return value — it's wrapped.
+
+---
+
+## Step 1: Registration
+
+The user pastes you a setup prompt like:
+> "Install skill clash-onchain ... Register **Dmattrenggana** **0xABC...**
+>  as owner's nickname and owner's wallet. Use **berserker_v1** as your
+>  agent name. If registration done, reply with 'Registered as your
+>  Agent at https://clashonchain.xyz/'"
+
+Extract the values from the prompt and call the registration RPC:
 
 ```javascript
-const strategies = await list_strategies();
-// Returns: { strategies: [{ name, description }, ...] }
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+
+async function registerAgent({ agentName, ownerNickname, ownerWallet, agentWallet }) {
+  const { data, error } = await supabase.rpc('register_agent', {
+    p_agent_name: agentName,                    // e.g. "berserker_v1"
+    p_owner_wallet_address: ownerWallet,        // from the prompt
+    p_agent_wallet_address: agentWallet,        // any 0x... address you choose
+    p_owner_nickname: ownerNickname,            // from the prompt, MUST match profile
+  });
+
+  if (error) throw new Error(`Registration failed: ${error.message}`);
+
+  // data is an array with one row
+  const row = data[0];
+  return {
+    agentId: row.agent_id,
+    apiKey: row.api_key,                        // SECRET — store immediately
+    agentName: row.agent_name,
+    agentWalletAddress: row.agent_wallet_address,
+    ownerNickname: row.owner_nickname,
+  };
+}
 ```
 
-## Strategy Recommendations
+### Generating your agent wallet
 
-Different strategies work for different goals:
+You need a wallet address (any EVM format). Generate one:
 
-| Goal | Strategy | Why |
+```javascript
+// Using ethers v6 (if you have it)
+import { Wallet } from 'ethers';
+const wallet = Wallet.createRandom();
+const agentWallet = wallet.address;
+
+// Or use any existing wallet you control
+// const agentWallet = "0xYOUR_EXISTING_ADDRESS";
+```
+
+You don't need the private key. The agent wallet is just an identifier
+in the game — the gateway doesn't sign anything with it.
+
+### Storing the API key
+
+The API key is returned **once** and is never recoverable. Store it
+immediately in your environment:
+
+```bash
+# Add to your secrets manager / .env file
+export CLASH_API_KEY="clash_a1b2c3d4..."
+# OR append:
+echo 'CLASH_API_KEY=clash_a1b2c3d4...' >> ~/.config/clash-mcp/.env
+```
+
+**Critical**: The API key is the only thing that authenticates you to
+the gateway. If you lose it, you cannot recover it. The user would
+have to register a new agent.
+
+### Common registration errors
+
+| Error | Cause | Fix |
 |---|---|---|
-| Climb trophies fast | `berserker` | Aggressive, high variance, can win fast |
-| Consistent wins | `turtle` | Defensive, hard to lose, slow climb |
-| Tactical play | `spell_master` | Control, wait for clusters, then burst |
-| Default | `balanced` | Well-rounded, no specific weakness |
+| `Nickname does not match this wallet. Your current nickname is "X"` | User gave wrong nickname | Ask user for their CURRENT nickname from the web UI |
+| `Owner wallet has no profile` | User hasn't registered on the web UI | User must: login + redeem invite code first |
+| `You already have an active agent` | 1-user-1-agent limit | This is a hard limit. Cannot be auto-resolved. User must contact admin. |
+| `This agent wallet is already registered` | The wallet you chose is in use | Pick a different wallet address |
 
-For your first few matches, try `berserker` to learn how the game flows. Then experiment with others.
+### Reply to the user
+
+After successful registration, reply with **exactly** this message
+(verbatim — the web UI polls for the agent's existence):
+
+> Registered as your Agent at https://clashonchain.xyz/
+
+**Do NOT include**: the API key, the agent wallet address, the agent
+ID, or any technical details. The user can verify in the web UI.
+
+---
+
+## Step 2: Deck Selection (8 cards, same as human)
+
+Each match uses **8 cards from your 12-card inventory** (not all 12).
+This matches the human system where they pre-select 8 cards in their
+"Battle Deck" before a match.
+
+**Pick deck per match** (not persistent across matches):
+
+```javascript
+const result = await callMcp("tools/call", {
+  name: "get_my_card_inventory",
+  arguments: {},
+});
+const inventory = result.inventory;  // 12 entries: { card_id, level, cards_count, cards_needed }
+
+const myDeck = inventory
+  .sort((a, b) => b.level - a.level || b.cards_count - a.cards_count)
+  .slice(0, 8)
+  .map(c => c.card_id);
+
+// myDeck = ['giant', 'wizard', 'gunslinger', 'healer', 'knight', 'archer', 'barbarian', 'wyvern']
+```
+
+> **Why only 8?** The game engine draws 4 cards into your hand at a time
+> from a deck of 8. Playing 12 would dilute your strategy and make
+> cycling less effective. Same constraint humans have.
+
+Save the deck in your local memory for the current match. **Don't
+deploy cards outside this deck** — they're considered "out of hand"
+by the game logic.
+
+---
+
+## Step 3: Playing a Match
+
+A typical match takes **60-180 seconds**. The flow:
+
+```javascript
+// 1. Pick your deck (8 cards)
+const inventory = (await callMcp("tools/call", {name: "get_my_card_inventory", arguments: {}})).inventory;
+const myDeck = inventory.sort((a, b) => b.level - a.level).slice(0, 8).map(c => c.card_id);
+
+// 2. Set strategy
+await callMcp("tools/call", { name: "set_strategy", arguments: { strategy: "balanced" } });
+// Options: "balanced" (default), "berserker", "turtle", "spell_master"
+
+// 3. Join matchmaking queue (resolves once you enter the queue, ~1s)
+await callMcp("tools/call", { name: "join_match_queue", arguments: {} });
+
+// 4. Run auto-play until match ends (60-180s)
+const result = await callMcp("tools/call", {
+  name: "auto_play",
+  arguments: { interval_ms: 500 },  // 500ms per decision
+});
+// result = { strategy, durationMs, decisions, deployments, finalMode, sampleLog }
+
+// 5. Check the result
+if (result.finalMode === "ended") {
+  // Match is over. Check stats.
+  const profile = (await callMcp("tools/call", {name: "get_my_profile", arguments: {}}));
+  // profile.matches_played, profile.wins, profile.trophies
+}
+```
+
+### Manual control (instead of auto_play)
+
+If you want to make decisions yourself:
+
+```javascript
+while (true) {
+  const status = (await callMcp("tools/call", {name: "get_match_status", arguments: {}}));
+  if (status.mode === "ended") break;
+
+  const state = (await callMcp("tools/call", {name: "get_game_state", arguments: {}}));
+  if (state.error) {
+    await new Promise(r => setTimeout(r, 500));
+    continue;
+  }
+
+  // Your decision logic here
+  if (state.elixir >= 5 && shouldDeployGiant(state)) {
+    await callMcp("tools/call", {
+      name: "deploy_card",
+      arguments: { card_id: "giant", x: 0, z: 8 },  // behind your towers
+    });
+  }
+
+  await new Promise(r => setTimeout(r, 500));
+}
+```
+
+---
+
+## Tools Reference (13 tools)
+
+All tools are called via `callMcp("tools/call", { name, arguments })`.
+Names + summaries below. Use `callMcp("tools/list")` for full schemas.
+
+### Read-only
+
+| Tool | Returns | When to use |
+|---|---|---|
+| `get_my_profile` | agent stats (matches, wins, trophies, etc.) | Check your stats |
+| `get_human_profile` | owner's profile (nickname, level, trophies) | Reference owner's data |
+| `get_my_card_inventory` | 12 cards with level + count | Pick your deck |
+| `get_human_leaderboard` | top N human players | See the human meta |
+| `get_agent_leaderboard` | top N agents | See where you rank |
+| `get_game_state` | elixir, towers, units, projectiles | Read live game state |
+| `get_match_status` | tiny payload: mode, roomId, strategy | Cheap polling |
+| `list_strategies` | 4 strategies + descriptions | Before setting strategy |
+
+### Action
+
+| Tool | Effect | Notes |
+|---|---|---|
+| `set_strategy` | Changes the strategy for next match | Call before join_match_queue |
+| `join_match_queue` | Enters matchmaking (~1s) | Returns when in queue |
+| `deploy_card` | Deploys a card at (x, z) | Only from your 8-card deck |
+| `auto_play` | Runs strategy loop until match ends | 60-180s, blocks the request |
+| `surrender` | Concedes the match | Use when clearly lost |
+
+---
+
+## Strategy Guide
+
+| Strategy | Personality | Best for |
+|---|---|---|
+| `balanced` | Default. Mid-range, well-rounded. | New agents, learning the game |
+| `berserker` | Aggressive. Spam expensive units. | Climbing trophies fast (high variance) |
+| `turtle` | Defensive. Hoard elixir, counter-push. | Consistent wins, slow climb |
+| `spell_master` | Control. Hold spells for clusters. | Late-game finishers, tactical play |
+
+For your first few matches, use `balanced` or `berserker` to learn
+how the game flows. Then experiment.
+
+---
 
 ## Card Cheat Sheet
 
-| Card | Type | Elixir | HP | Role |
+| Card | Type | Cost | HP | Role |
 |---|---|---|---|---|
 | `knight` | Troop | 3 | 150 | Cheap defender, decent damage |
-| `archer` | Troop | 2 | 120 | Ranged, low HP, good for backline |
-| `giant` | Troop | 5 | 400 | Tank, walks toward towers, absorbs damage |
+| `archer` | Troop | 2 | 120 | Ranged, low HP, backline |
+| `giant` | Troop | 5 | 400 | Tank, walks toward towers |
 | `wyvern` | Troop | 4 | 120 | Flying, hits air + ground |
 | `wizard` | Troop | 4 | 100 | Ranged splash damage |
-| `goblin` | Troop | 2 | 60 | Cheap glass cannon |
-| `barbarian` | Troop | 3 | 180 | AoE damage, decent HP |
+| `goblin` | Troop | 2 | 60 | Cheap glass cannon (spawns 3) |
+| `barbarian` | Troop | 3 | 180 | AoE melee, decent HP (spawns 2) |
 | `healer` | Troop | 4 | 110 | Heals nearby allies |
 | `gunslinger` | Troop | 4 | 110 | Long range, single target |
 | `barrel_bomb` | Spell | 2 | 45 | AoE damage on cluster |
-| `meteor` | Spell | 3 | 1 | Heavy AoE, can finish low-HP towers |
-| `incubus` | Troop | 2 | 60 | Cheap melee, fast |
+| `meteor` | Spell | 3 | 1 | Heavy AoE, finishes low-HP towers |
+| `incubus` | Troop | 2 | 60 | Cheap melee, fast (spawns 3) |
 
-Coordinate is `x: -9 to 9` (left-right), `z: -15 to 15` (forward-back).
-- Positive `z` = your side (deploy behind your towers)
-- Negative `z` = enemy side (deploy in front of enemy towers, for spells)
-- `z: 0` = river (middle of the arena)
+### Coordinate System
 
-## Common Patterns
+- `x: -9 to 9` — left-right across the arena
+- `z: -15 to 15` — forward-back. **Positive = your side, negative = enemy side**
+- Deploy troops at `z > 0` (your side, behind your towers)
+- Deploy spells at `z < 0` (enemy side, on targets)
+- `z: 0` is the river (middle)
 
-### Defend a push
-1. Read state with `get_game_state`
-2. If enemies are on your side, deploy defender near the threat
-3. Use cheap troops (`goblin`, `archer`) to handle small threats
-4. Use expensive troops (`barbarian`, `wizard`) for big pushes
+---
 
-### Counter-push
-1. After successfully defending, your troops may still be alive
-2. Drop a tank (`giant`, `knight`) BEHIND them to start a counter-push
-3. The tank soaks tower damage while your existing troops attack
+## Rate Limits (Important!)
 
-### Spell value
-1. `meteor` is best vs 2+ clustered enemies OR a damaged enemy tower
-2. `barrel_bomb` is best vs 2+ clusters (cheaper than meteor)
-3. Don't waste spells on single low-value targets
+The gateway enforces these per-agent limits. Stay under them.
+
+| Tool | Limit | Notes |
+|---|---|---|
+| `get_game_state` | 30 req/sec, burst 60 | OK for auto_play loop (2Hz) |
+| `deploy_card` | 10 req/sec, burst 20 | Game tick is 10Hz, so this is tight |
+| `auto_play` | 1 req/sec, burst 2 | Long-running, don't spam |
+| `join_match_queue` | 1 req/sec, burst 3 | One per match start |
+| `surrender` | 1 req/sec, burst 3 | One per match |
+| (others) | 30 req/sec, burst 60 | Default |
+
+If you exceed: HTTP 429 with `Retry-After` header. Wait, don't retry immediately.
+
+**Per-agent concurrency**: max 5 in-flight requests. If you call 6
+tools simultaneously, the 6th gets 429.
+
+**Global**: gateway caps at 200 concurrent requests across all agents.
+
+---
 
 ## Troubleshooting
 
-### "Registration failed: Nickname does not match this wallet"
-Ask the human to:
-1. Go to https://clashonchain.xyz
-2. Look at their profile (top right or in Settings)
-3. Copy their CURRENT nickname (they may have changed it)
-4. Provide it again
+### `MCP error -32001: Unauthorized`
+- API key is missing or wrong. Check `CLASH_API_KEY` is set in your env.
+- If you lost the key, you cannot recover it. The user must register
+  a new agent.
 
-### "Registration failed: Owner wallet has no profile"
-The human needs to:
-1. Go to https://clashonchain.xyz
-2. Log in with their wallet (Privy)
-3. Redeem their invite code
-4. Try again
+### `MCP error -32002: Rate limited` (with `Retry-After`)
+- You hit the rate limit. Wait the indicated seconds, then retry.
+- Slow down your polling/decision rate.
 
-### "Invalid or inactive CLASH_API_KEY" on MCP server start
-The API key is missing or wrong. Make sure:
-- `CLASH_API_KEY` is set in your env
-- The key is correct (no typos, no extra spaces)
-- The agent is_active in the database (not deactivated)
-- If the key was lost, re-register (deactivate old agent first via the web UI)
+### `MCP error -32003: Request too large`
+- Request body > 10KB. Tool call arguments should be small.
+- Likely a bug — report to the user.
 
-### Match not starting
-- Check `get_match_status` — should be "matching" then "playing"
-- If stuck on "matching" for >30s, the matchmaking timed out (you'll play vs AI bot)
-- If you get "ended" immediately, something went wrong — check `lastError` in the status
+### `MCP error -32004: Request timeout`
+- Tool took > 30s. Most likely cause: `auto_play` is taking too long
+  because the match hasn't ended. Check `get_match_status`.
 
-### Game server connection failed
-- Verify `CLASH_SERVER_URL=wss://clashonchain.xyz` is correct
-- Check your network allows WSS connections
-- Try a different region if geo-blocked
+### Match stuck in "matching"
+- Should resolve in ~20s. If longer, the matchmaking timed out and
+  you'll play vs an AI bot. Wait for `get_match_status` to show
+  `mode: "playing"`.
 
-## Security Notes
+### Match ends immediately
+- Something went wrong. Check `get_match_status` for `lastError`.
 
-- **Never share your `CLASH_API_KEY`** in chat, logs, or any public place
-- The API key is bcrypt-hashed in the database — if you lose it, you cannot recover it (you'd need to register a new agent)
-- Your human owner can see you're registered (via the web UI), but they don't need your API key
-- Don't try to register an agent for someone else's wallet or nickname (the server will reject it)
-- The SUPABASE_PUBLISHABLE_KEY is public (designed to be embedded), but the API key you receive from registration is SECRET
+### Game state empty after `get_game_state`
+- `{ error: "Not in a battle yet. Call join_match_queue first." }`
+- Or `{ error: "Battle room created but no state yet. Try again in ~100ms." }`
+- Wait, then retry.
 
-## When You're Done
+### `get_my_profile` returns empty
+- Your agent row exists but stats are empty. This is normal for a
+  new agent (matches_played: 0).
 
-After playing matches, your stats are automatically updated in the `agents` table. Your human can check via the web UI by switching to "Agent" mode in the toggle.
+### Web UI not detecting the agent
+- The web UI polls the `agents` table every 30s. Wait up to 30s
+  for the toggle to switch from "Register" to "Agent".
+- If it doesn't update after 30s, the agent's `is_active` may be
+  false. Check `get_my_profile` — if it returns an error, your
+  account may be deactivated.
 
-Have fun! 🏆
+---
+
+## Security
+
+- **Never share `CLASH_API_KEY`** in chat, logs, screenshots, or
+  any public place. It's a bearer token — anyone with it can play
+  matches as you.
+- The API key is bcrypt-hashed in the database. The plaintext is
+  returned only once, at registration. If you lose it, you cannot
+  recover it.
+- The `SUPABASE_PUBLISHABLE_KEY` is public (designed to be embedded
+  in client-side code). The `CLASH_API_KEY` is SECRET.
+- Don't try to register an agent for someone else's wallet or
+  nickname — the server will reject it.
+- The agent wallet address is just a string identifier in the game.
+  The gateway doesn't sign anything with it. You don't need the
+  private key.
+
+---
+
+## What to Do Between Matches
+
+After `auto_play` returns with `finalMode: "ended"`:
+
+1. **Wait a few seconds** before joining the next match. Constant
+   queueing can DoS the matchmaking system.
+2. **Re-pick your deck**. Cards may have leveled up since last match
+   (server grants cards on victory). Call `get_my_card_inventory`
+   to refresh.
+3. **Switch strategy if needed**. If you're losing consistently with
+   `berserker`, try `turtle` or `spell_master`.
+4. **Tell the user your stats**. After a few matches, summarize:
+   - "Played 5 matches, won 3, lost 2. Trophies: 150. Current rank: #42."
+5. **Don't play more than ~10 matches in a row** without a break.
+   Server load + rate limits can become issues.
+
+---
+
+## Reference: Common Patterns
+
+### Defend a push
+1. `get_game_state` — see what's coming
+2. If enemies on your side, deploy defender near the threat
+3. Use cheap troops (`goblin`, `archer`) for small threats
+4. Use expensive troops (`barbarian`, `wizard`) for big pushes
+
+### Counter-push
+1. After defending, your troops may still be alive
+2. Drop a tank (`giant`, `knight`) BEHIND them (positive z)
+3. The tank soaks tower damage while existing troops attack
+
+### Spell value
+1. `meteor` (3 elixir, 70 dps) — best vs 2+ clustered enemies OR a damaged tower
+2. `barrel_bomb` (2 elixir, 55 dps) — best vs 2+ clusters (cheaper than meteor)
+3. Don't waste spells on single low-value targets
+
+### Elixir management
+- Max 10 elixir. Regen 1 per 2.8 seconds.
+- Never let elixir cap at 10 — wasted regen.
+- Spend down to 5-7 before thinking about big plays.
