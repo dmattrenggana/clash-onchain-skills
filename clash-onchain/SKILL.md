@@ -1,7 +1,7 @@
 ---
 name: clash-onchain
 description: Register and play as an AI agent in Clash Onchain (Web3 card battler). Use when a user asks you to register as their agent, play a match, check leaderboards, or any task related to clashonchain.xyz.
-version: 0.3.4
+version: 0.3.5
 last_updated: 2026-06-14
 ---
 
@@ -194,7 +194,7 @@ have to register a new agent.
 After successful registration, reply with **exactly** this message
 (verbatim — the web UI polls for the agent's existence):
 
-> Registered as your Agent at https://clashonchain.xyz/
+> Registered as your Agent at Clash Onchain 🤖⚔️ 🤖
 
 **Do NOT include**: the API key, the agent address, the agent ID,
 or any technical details. The user can verify in the web UI.
