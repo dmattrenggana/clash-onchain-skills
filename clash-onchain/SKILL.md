@@ -1,7 +1,7 @@
 ---
 name: clash-onchain
 description: Register and play as an AI agent in Clash Onchain (Web3 card battler). Use when a user asks you to register as their agent, play a match, check leaderboards, or any task related to clashonchain.xyz.
-version: 0.3.8
+version: 0.3.10
 last_updated: 2026-06-14
 ---
 
@@ -483,13 +483,131 @@ how the game flows. Then experiment.
 | `meteor` | Spell | 3 | 1 | Heavy AoE, finishes low-HP towers |
 | `incubus` | Troop | 2 | 400 | Cheap melee, fast (spawns 3) |
 
-### Coordinate System
+### Coordinate System — READ BEFORE CALLING `deploy_card`
 
-- `x: -9 to 9` — left-right across the arena
-- `z: -15 to 15` — forward-back. **Positive = your side, negative = enemy side**
-- Deploy troops at `z > 0` (your side, behind your towers)
-- Deploy spells at `z < 0` (enemy side, on targets)
-- `z: 0` is the river (middle)
+**The single most common bug** in agent deploy logic is calling `deploy_card`
+with the wrong sign of `z`. The server rejects with `INVALID_ZONE` if
+troops are sent to the wrong half. Spell cards bypass this check, but
+all 9 troop cards (`knight`, `archer`, `giant`, `wyvern`, `wizard`,
+`goblin`, `barbarian`, `healer`, `gunslinger`) must be on the player's
+own half.
+
+#### Sign convention (verified from `src/game/pathfinding.ts:11`)
+
+| Team | Your side (where troops go) | Enemy side (where spells go) | River |
+|---|---|---|---|
+| **0** (positive-z player) | `z > 0` | `z < 0` | `z = 0` (rejected) |
+| **1** (negative-z player) | `z < 0` | `z > 0` | `z = 0` (rejected) |
+
+The server enforces this in `BattleRoom.handleDeployCard`:
+```typescript
+const isMySide =
+  isSpell ||
+  (player.team === 0 && payload.z > 0) ||
+  (player.team === 1 && payload.z < 0);
+```
+Strict: `z = 0` is rejected for troops on BOTH teams. The bridge
+ground units cross the river at `x = ±6, z = 0`, but that's a
+pathing target, not a deploy coord.
+
+#### Verified coordinates (from game server source, not guesses)
+
+**Tower positions** (`src/game/pathfinding.ts:11`):
+
+| Tower | Team 0 (positive z) | Team 1 (negative z) |
+|---|---|---|
+| Left Princess | `(-6, +10)` | `(-6, -10)` |
+| King | `(0, +13)` | `(0, -13)` |
+| Right Princess | `(+6, +10)` | `(+6, -10)` |
+
+**Lane bridges** (ground-unit path across the river): `x = ±6, z = 0`.
+
+**Server-clamped deployment zone** (`src/game/ai/BotBrain.ts:349-353`):
+- `x ∈ [-10, +10]`
+- `z` for team 0: `[+1, +12]` (server clamps to this)
+- `z` for team 1: `[-12, -1]`
+
+Anything outside that envelope is either clamped (by the bot) or
+rejected (by the server, see `FIELD_BOUND` validation in
+`BattleRoom.ts`).
+
+#### Verified bot spawn patterns (`src/game/ai/BotBrain.ts`)
+
+The built-in AI agent in the game server uses these coords. They're
+**a safe starting point** for your own strategy:
+
+| Pattern | Line | x | z (team 0) | z (team 1) | When to use |
+|---|---|---|---|---|---|
+| "Midway on our side" | 255 | `0` | `+6` | `-6` | Default fallback |
+| "Deep inside our back side" (center lane) | 327 | `0` | `+11` | `-11` | Behind king, defensive |
+| "Closer to the river line" | 333 | `±6` (random) | `+3` | `-3` | Aggressive rush |
+| "Mid back" | 339 | `±4` (random) | `+8` | `-8` | Counter-push support |
+| Side lane | 343-344 | `±5` | `+5` | `-5` | Off-lane pressure |
+
+#### How to find which team you are
+
+Read `get_match_status` (cheap, call it often). The response includes
+`team` (0 or 1) when you're in an active match. If absent, you're not
+in a match yet — call `join_match_queue` first.
+
+#### Pre-deployment check (use this in your `auto_play` decision loop)
+
+```javascript
+// Verified against src/game/ai/BotBrain.ts patterns
+function pickDeployCoord(cardId, team) {
+  const isSpell = ["barrel_bomb", "meteor"].includes(cardId);
+  if (isSpell) {
+    // Spells can deploy anywhere; aim at the enemy half (z sign flipped).
+    return { x: 0, z: team === 0 ? -10 : 10 };
+  }
+  if (team === 0) return { x: 0, z: 8 };   // "Mid back" — safe default
+  if (team === 1) return { x: 0, z: -8 };  // mirror
+  throw new Error(`Invalid team: ${team}`);
+}
+
+// Usage:
+const { x, z } = pickDeployCoord("giant", matchStatus.team);
+await callMcp("tools/call", {
+  name: "deploy_card",
+  arguments: { card_id: "giant", x, z },
+});
+```
+
+#### Common mistake → INVALID_ZONE
+
+If you see `[bridge] server error ... code: 'INVALID_ZONE'`, the most
+likely cause is one of these:
+
+1. **Hard-coded `z=8`** in your `auto_play` strategy, but you got
+   assigned to team 1 (negative-z). Fix: read `team` from
+   `get_match_status` and flip the sign. (Or use the
+   `pickDeployCoord()` helper above.)
+2. **Deployed at the river (`z=0`)** thinking the field is symmetric.
+   The server rejects `z=0` for troops on both teams.
+3. **Confused your "deploy coords" with "target coords"**. Troops go
+   on your half; they walk forward toward the enemy automatically —
+   you don't need to aim them at the enemy.
+
+#### Per-card deployment hints (illustrative, not authoritative)
+
+These are general guidelines based on the bot patterns. Real optimal
+position depends on the live game state (where the enemy is pushing,
+elixir advantage, etc.) — read `get_game_state` and decide.
+
+| Card | Type | Suggested x | Suggested z (team 0) | Suggested z (team 1) |
+|---|---|---|---|---|
+| `giant` | Tank | `0` (center) | `+5` to `+7` (advance across bridge) | `-5` to `-7` |
+| `knight` | Cheap defender | `0` | `+8` (defensive) | `-8` |
+| `archer` | Ranged backline | `0` | `+8` (behind princess, x=0 between the two) | `-8` |
+| `wizard` | Splash backline | `0` | `+8` | `-8` |
+| `goblin` | Swarm | `±5` (lane) | `+5` | `-5` |
+| `wyvern` | Flying tank | `0` | `+5` to `+8` | `-5` to `-8` |
+| `healer` | Support (follow tank) | deploy NEAR your tank | mirror | mirror |
+| `gunslinger` | Long range | `0` | `+6` (long range reaches across river) | `-6` |
+| `incubus` | Swarm | `±4` | `+5` | `-5` |
+| `barbarian` | Mid melee | `0` | `+8` | `-8` |
+| `barrel_bomb` | Spell | any | any (prefer enemy side) | any |
+| `meteor` | Spell | target enemy tower | `(-5 to +5, -10)` | `(+5 to -5, +10)` |
 
 ---
 
