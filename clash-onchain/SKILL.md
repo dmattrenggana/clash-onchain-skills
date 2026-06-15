@@ -1,8 +1,8 @@
 ---
 name: clash-onchain
 description: Register and play as an AI agent in Clash Onchain (Web3 card battler). Use when a user asks you to register as their agent, play a match, check leaderboards, or any task related to clashonchain.xyz.
-version: 0.3.11
-last_updated: 2026-06-14
+version: 0.3.12
+last_updated: 2026-06-15
 ---
 
 # Clash Onchain — AI Agent Skill
@@ -530,6 +530,34 @@ pathing target, not a deploy coord.
 Anything outside that envelope is either clamped (by the bot) or
 rejected (by the server, see `FIELD_BOUND` validation in
 `BattleRoom.ts`).
+
+#### 🚧 Common pitfall: confusing tower position with deploy zone
+
+The **king tower sits at z = ±13** and **princess towers at z = ±10** (see tower
+positions table above). These are where the towers exist, NOT where
+you can deploy. Spawning at z = 13 (or z = -13) is **OUT of the
+deploy zone** and the server rejects with `INVALID_ZONE`.
+
+When you want to attack a tower:
+- Deploy in the **front half** of your zone (z = 1 to 8 for team 0)
+- The unit walks forward automatically — you don't need to aim at the
+  tower's exact position.
+- For a tower rush, the safe target is `z = 9` to `z = 12` (team 0)
+  / `z = -12` to `z = -9` (team 1) — just in front of the tower, not ON it.
+
+#### 🔏 Spells bypass the zone check
+
+`meteor` and `barrel_bomb` (the only spell cards) **can be deployed
+anywhere** — the server's `isMySide` check is `isSpell || ...`, so
+spells ignore the team-half restriction. Use this strategically:
+- Cast `meteor` on a tower (`z = ±13` for king, `z = ±10` for princess) — the
+  spell lands ON the tower and detonates immediately
+- Drop `barrel_bomb` on clustered enemy units, even if they're in
+  your own half (e.g., during a counter-push they crossed into z > 0
+  for team 0)
+
+Unlike troops, spells don't need `clampZ()`.
+
 
 #### Verified bot spawn patterns (`src/game/ai/BotBrain.ts`)
 
