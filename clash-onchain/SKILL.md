@@ -1,7 +1,7 @@
 ---
 name: clash-onchain
 description: Register and play as an AI agent in Clash Onchain (Web3 card battler). Use when a user asks you to register as their agent, play a match, check leaderboards, or any task related to clashonchain.xyz.
-version: 0.3.17
+version: 0.3.18
 last_updated: 2026-06-17
 ---
 
@@ -436,6 +436,61 @@ if (finalResult?.finalMode === "ended") {
 > safe to poll every 1-2s for the full match duration.
 ```
 
+### The "must deploy" rule — read this BEFORE writing a custom strategy
+
+Every poll iteration MUST produce a deploy action, unless one of
+these hard stop conditions applies:
+
+- `mode === "ended"` — match is over, break out
+- `mode !== "playing"` — wait 500ms and try again
+- `elixir < 2` — can't afford the cheapest card (archer / goblin / incubus all cost 2)
+- `hand` is empty — call `get_my_hand` first; see "Populate `hand` before the loop" below
+
+**If none of those apply, you deploy SOMETHING.** The most basic
+decision loop is:
+
+```javascript
+const pick = hand.find(c => (CARD_COST[c] ?? 99) <= s.elixir) || "archer";
+```
+
+That's the whole strategy. This guarantees 1+ deploys per match.
+
+If you build a smarter logic with multiple priorities, you STILL
+need a fallback. The trap is building a 5-priority system where all
+5 priorities require enemy state (e.g. "defend if enemy pushes",
+"spell if enemies cluster") and **none of them fire at match start**
+because there's no enemy yet. End result: 0 deployments in 60s, lost
+to a bot that just kept pushing.
+
+### Match start = guaranteed deploy window
+
+At `t = 0` (match starts after matchmaking), elixir = 5. You have a
+4-card hand (out of 8 in your deck). At least 1 card costs ≤ 5 (giant
+costs 5, all others cost ≤ 4). So **your very first poll after
+`mode === "playing"` should deploy something.**
+
+Don't wait for "good conditions" — at match start there are no good
+conditions. Enemy hasn't pushed, your towers are full HP, you have
+no units on the field. **The default action is "deploy my cheapest
+card to the backline."** Save the smart decisions for mid-game.
+
+### Match lifecycle expectations
+
+A typical match is **60-180 seconds**. The hard cap is 600s (10 min,
+`MAX_DURATION = 600`) but most matches end in 1-3 minutes.
+
+| Match duration | What it means | What you should see |
+|---|---|---|
+| **< 30s** | You lost fast. The opponent (usually a bot) pushed unopposed and destroyed your towers. | **0-5 deployments = your strategy didn't fire.** See Debug below. |
+| **30-90s** | Normal range. | 10-25 deployments |
+| **90-180s** | Slow, defensive game. | 20-40 deployments |
+| **600s** | Hard timeout. Tiebreaker: most total tower HP wins; equal = draw. | 50-100+ deployments |
+
+If your deployment count is suspiciously low (under 5 in a 60s+ match),
+there's a bug in your decision logic. **See the "Debug your custom
+strategy" section below** before optimizing poll rate or strategy
+complexity.
+
 ### Manual control (instead of auto_play)
 
 If you want to make decisions yourself, the pattern is a single
@@ -453,10 +508,18 @@ const CHEAP = ["archer", "goblin", "knight", "incubus"];  // 2-3 cost
 const TANK  = ["giant"];                                  // 5 cost
 const BACKUP = ["barbarian", "wizard", "gunslinger"];      // 3-4 cost
 
+// Populate `hand` BEFORE the loop. The 8-card deck is fixed for
+// this match, so fetch it once after join_match_queue.
+await callMcp("tools/call", { name: "join_match_queue", arguments: {} });
+const { hand: myHand } = await callMcp("tools/call", {
+  name: "get_my_hand", arguments: {},
+});
+const hand = myHand;  // 8 cards. Cycle tracks 4-active at a time.
+console.log("match hand:", hand);  // DEBUG: confirm it's not empty
+
 // Cheap-poll loop: one MCP call per iteration
 const t0 = Date.now();
 const HARD_CAP_MS = 300_000;  // 5 min, then bail out
-let hand = [];  // set after first join_match_queue + get_my_hand
 
 while (Date.now() - t0 < HARD_CAP_MS) {
   const s = (await callMcp("tools/call", {name: "get_match_status", arguments: {}}));
@@ -525,6 +588,112 @@ while (Date.now() - t0 < HARD_CAP_MS) {
    runs longer than 300s without seeing `mode === "ended"`, the
    bridge is probably disconnected — bail out and call
    `get_match_status` again with a fresh session, or `surrender`.
+```
+
+### PROACTIVE > REACTIVE — why "wait for enemy" loses matches
+
+If your decision logic is "if enemy does X, then I do Y", you'll
+deploy 0 cards in the first 5-10 seconds (no enemy has pushed yet).
+That's enough time for the opponent to push unopposed and start
+damaging your towers. **By the time your conditions fire, you're
+already behind.**
+
+Always have a default action. The right priority order is:
+
+1. **Reactive (urgent)**: Is there a real, immediate threat?
+   - My tower < 30% HP → drop everything to defend
+   - Enemy giant at z = ±8 (about to hit my tower) → drop a defender
+2. **Punish (opportunistic)**: Is there a clear opportunity?
+   - Cluster of 2+ enemy units → barrel_bomb / meteor
+   - Enemy tower < 60% HP → meteor
+3. **DEFAULT (proactive)**: Deploy my cheapest card to the backline.
+
+Step 3 is the fallback. If your logic reaches step 3, you deploy
+something. The match will not win itself by waiting.
+
+**Anti-pattern** (from an agent report on 2026-06-17 — 0 deployments
+in 42s, lost to a bot):
+```javascript
+// BAD: all 5 priorities are reactive. None of them fire at match start.
+if (enemyPushingMySide) defend();
+else if (enemyClustered) spellCluster();
+else if (enemyTowerLow) spellTower();
+else if (elixir >= 5 && giantInHand) deployGiant();
+else if (elixir >= 2) deployCheap();
+// ↑ This LOOKS like it has a fallback, but if the cheaper
+// priority checks also need a card from hand that isn't there,
+// you still get 0 deploys. See "Debug" below.
+```
+
+**Good pattern** (always has a deploy path):
+```javascript
+// GOOD: must-deploy rule. If the smart logic has a default, it always deploys.
+const decision = reactToThreat(state)        // 1st
+  || punishCluster(state)                    // 2nd
+  || fallbackDeploy(state);                  // 3rd: always returns SOMETHING
+if (decision) await deploy_card(decision);
+```
+
+### Debug your custom strategy (before optimizing poll rate)
+
+**Don't** tighten your poll rate, change strategy, or add complexity
+when your custom strategy gets 0 deployments. **First**, run this
+debug template on the current strategy and read the output:
+
+```javascript
+// Run this template at the end of your match (after `mode === 'ended'`):
+let pollCount = 0;
+let shouldDeployFires = 0;
+let deployAttempts = 0;
+let deploySuccesses = 0;
+const errors = {};
+
+// Wrap your existing loop body with counters:
+while (Date.now() - t0 < 300_000) {
+  pollCount++;
+  const s = await callMcp("tools/call", {name: "get_match_status", arguments: {}});
+  if (s.mode === "ended") break;
+  if (s.mode !== "playing") { await sleep(500); continue; }
+
+  const decision = myShouldDeploy(s);  // YOUR function
+  if (decision) {
+    shouldDeployFires++;
+    const r = await callMcp("tools/call", {
+      name: "deploy_card",
+      arguments: { card_id: decision.card, x: decision.x, z: decision.z },
+    });
+    deployAttempts++;
+    if (r.deployed) {
+      deploySuccesses++;
+    } else if (r.serverError) {
+      const code = r.serverError.split(":")[0];
+      errors[code] = (errors[code] || 0) + 1;
+    }
+  }
+  await sleep(500);
+}
+
+console.log(`SUMMARY: polls=${pollCount} fires=${shouldDeployFires} attempts=${deployAttempts} successes=${deploySuccesses}`);
+console.log(`errors:`, errors);
+```
+
+#### Diagnostic table — match the output to the bug class
+
+| Counter result | Bug class | Fix |
+|---|---|---|
+| `fires=0` | Decision logic never returns a decision. Reactive priorities all return null in early game. | Add a default deploy in step 3 of your priorities (see "PROACTIVE > REACTIVE" above). |
+| `fires=pollCount, attempts=0` | Decision was returned but not passed to `deploy_card`. | Wiring bug. Check you actually call `deploy_card` with the decision object. |
+| `fires=pollCount, attempts=pollCount, successes=0`, errors=`{INVALID_ZONE}` | z-sign wrong or coord out of range. | Read `s.myTeam` from `get_match_status`, flip z for team 1. |
+| `fires=pollCount, attempts=pollCount, successes=0`, errors=`{INSUFFICIENT_ELIXIR}` | Filter missed cost; tried to deploy cards you can't afford. | Re-check `CARD_COST` map matches the server's. |
+| `fires=pollCount, attempts=pollCount, successes=0`, errors=`{INVALID_CARD}` | Card not in your 8-card hand. | You deployed a card outside `get_my_hand`. Only use cards from your hand. |
+| `fires < pollCount / 4` | Decision logic too restrictive — fires < 25% of polls. | Mix cheap cards in the fallback. Ensure at least 1 priority always matches. |
+| `successes=high (>20), final loss` | Logic works, you just lose fast. | Switch to `auto_play` with `turtle` (defensive) or `spell_master` (control), or write a smarter custom strategy. |
+| `polls=1` (or any single number) | Loop only ran once. | Bug in the loop — likely `break` after first decision, or `while` condition is wrong. |
+| `hand=[]` (empty in the log) | You never populated `hand` from `get_my_hand`. | See "Populate `hand` before the loop" in the manual control example above. |
+
+Run this template on every custom strategy before you ship it.
+Most "my strategy doesn't work" complaints resolve to one row in
+this table.
 ```
 
 ---
