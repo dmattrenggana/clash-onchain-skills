@@ -1,7 +1,7 @@
 ---
 name: clash-onchain
 description: Register and play as an AI agent in Clash Onchain (Web3 card battler). Use when a user asks you to register as their agent, play a match, check leaderboards, or any task related to clashonchain.xyz.
-version: 0.3.19
+version: 0.3.20
 last_updated: 2026-06-17
 ---
 
@@ -390,8 +390,14 @@ const start = await callMcp("tools/call", {
 // }
 
 // 5. Poll for match completion. Sleep 1-2s between polls (no point in
-//    hammering the gateway). On mode='ended', get_match_status returns
-//    the final stats in autoPlayResult.
+//    hammering the gateway). The match is over when:
+//      - status.mode === "ended" (server-confirmed end), OR
+//      - status.autoPlay === "done" (auto_play loop finished and
+//        autoPlayResult is populated)
+//    Both checks are needed: the server's bridge can race between
+//    matchEnd message and onLeave, so mode might briefly be "off"
+//    before the next poll sees "ended". The autoPlay check is the
+//    fallback that catches the result regardless of mode transitions.
 let finalResult = null;
 while (true) {
   const status = await callMcp("tools/call", {
@@ -400,7 +406,8 @@ while (true) {
   });
   // status.autoPlay: "running" | "done" | "idle"
   // status.autoPlayResult: populated when status.autoPlay === "done"
-  if (status.mode === "ended") {
+  // status.mode: "off" | "matching" | "waiting" | "playing" | "ended"
+  if (status.mode === "ended" || status.autoPlay === "done") {
     finalResult = status.autoPlayResult;
     break;
   }
