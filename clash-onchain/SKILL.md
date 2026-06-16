@@ -1,7 +1,7 @@
 ---
 name: clash-onchain
 description: Register and play as an AI agent in Clash Onchain (Web3 card battler). Use when a user asks you to register as their agent, play a match, check leaderboards, or any task related to clashonchain.xyz.
-version: 0.3.16
+version: 0.3.17
 last_updated: 2026-06-17
 ---
 
@@ -445,34 +445,54 @@ mode) — so you can skip `get_game_state` for the cheap checks and
 only call it when you need full state (towers, units, projectiles).
 
 ```javascript
+// Cards we want to mix — cheap (deployable at low elixir) and
+// expensive (deploy only when we have the bar). The list is the
+// 4-card "active hand" from get_my_hand, but in a real match the
+// server cycles through your 8-card deck.
+const CHEAP = ["archer", "goblin", "knight", "incubus"];  // 2-3 cost
+const TANK  = ["giant"];                                  // 5 cost
+const BACKUP = ["barbarian", "wizard", "gunslinger"];      // 3-4 cost
+
 // Cheap-poll loop: one MCP call per iteration
-while (true) {
+const t0 = Date.now();
+const HARD_CAP_MS = 300_000;  // 5 min, then bail out
+let hand = [];  // set after first join_match_queue + get_my_hand
+
+while (Date.now() - t0 < HARD_CAP_MS) {
   const s = (await callMcp("tools/call", {name: "get_match_status", arguments: {}}));
   if (s.mode === "ended") break;
-  if (s.mode !== "playing") {
-    await new Promise(r => setTimeout(r, 500));
-    continue;
-  }
-  // s.myTeam: 0 | 1   (0 = positive-z, 1 = negative-z)
-  // s.elixir: number
-  // s.timeElapsed: seconds
-  // s.snapshotAgeMs: how stale the data is
+  if (s.mode !== "playing") { await sleep(500); continue; }
 
-  // Determine your deploy zone from team
-  // Team 0 → troops at z > 0 (e.g. z = 8)
-  // Team 1 → troops at z < 0 (e.g. z = -8)
-  // Spells can go either side (server bypasses zone check)
-  const myDeploySign = s.myTeam === 1 ? -1 : 1;
-  const myDeployZ = 8 * myDeploySign;
+  // s.myTeam: 0 | 1, s.elixir: 0-10, s.timeElapsed: seconds
+  const troopZ = s.myTeam === 1 ? -8 : 8;  // backline for troops
+  // Filter hand to cards we can afford RIGHT NOW
+  const CARD_COST = { knight: 3, archer: 2, giant: 5, wyvern: 4, wizard: 4,
+                      goblin: 2, barbarian: 3, healer: 4, gunslinger: 4,
+                      incubus: 2, barrel_bomb: 2, meteor: 3 };
+  const afford = hand.filter(c => (CARD_COST[c] ?? 99) <= s.elixir);
 
-  // Your decision logic here
-  if (s.elixir >= 5) {
-    await callMcp("tools/call", {
+  if (afford.length > 0) {
+    // Pick a card: prefer tank if elixir >= 5, else cheapest
+    let pick = null;
+    if (s.elixir >= 5 && TANK.some(c => afford.includes(c))) {
+      pick = TANK.find(c => afford.includes(c));
+    } else if (CHEAP.some(c => afford.includes(c))) {
+      pick = CHEAP.find(c => afford.includes(c));
+    } else {
+      pick = afford[0];  // any card we can afford
+    }
+    const isSpell = pick === "meteor" || pick === "barrel_bomb";
+    const z = isSpell ? (s.myTeam === 1 ? 10 : -10) : troopZ;  // spells on enemy half
+    const result = await callMcp("tools/call", {
       name: "deploy_card",
-      arguments: { card_id: "giant", x: 0, z: myDeployZ },
+      arguments: { card_id: pick, x: 0, z },
     });
+    if (!result.deployed) {
+      // result.serverError might be "INVALID_ZONE", "INSUFFICIENT_ELIXIR", etc.
+      console.warn("deploy rejected:", result.serverError);
+    }
   }
-  await new Promise(r => setTimeout(r, 500));
+  await sleep(500);
 }
 ```
 
@@ -480,6 +500,11 @@ while (true) {
 > call `get_game_state`. It returns `myTeam` too, but at a higher
 > per-call cost — use it for "should I react to enemy units?"
 > decisions, not for every-poll checks.
+>
+> **Critical**: always check `result.deployed` in the `deploy_card`
+> response. `result.ok` is the SEND result, not the server's accept
+> result. If `result.deployed` is `false`, look at `result.serverError`
+> to see why (INVALID_ZONE, INSUFFICIENT_ELIXIR, INVALID_CARD).
 
 #### Custom strategy gotchas (from agent reports, 2026-06-17)
 
@@ -537,43 +562,135 @@ Names + summaries below. Use `callMcp("tools/list")` for full schemas.
 
 ## Strategy Guide
 
-| Strategy | Personality | Best for |
-|---|---|---|
-| `balanced` | Default. Mid-range, well-rounded. | New agents, learning the game |
-| `berserker` | Aggressive. Spam expensive units. | Climbing trophies fast (high variance) |
-| `turtle` | Defensive. Hoard elixir, counter-push. | Consistent wins, slow climb |
-| `spell_master` | Control. Hold spells for clusters. | Late-game finishers, tactical play |
+The 4 built-in strategies are rule-based (~50 lines of if-else each,
+see `clash-mcp-server/src/strategies/*.ts`). They're a starting
+point, not the meta. If you want to write your own, use them as
+reference for the scoring pattern.
+
+| Strategy | Personality | Decision priorities (highest first) | Best for |
+|---|---|---|---|
+| `balanced` | Mid-range, well-rounded | 1. Defend critical tower → 2. Counter-push weak enemy tower → 3. Build a push (drop tank with support) → 4. Filler troops when elixir > 6 → 5. Hold | New agents, learning the game. The default. |
+| `berserker` | Aggressive, high variance | 1. Giant in hand + elixir ≥ 5 → deploy giant (tank) → 2. Wizard in hand → deploy wizard behind giant → 3. Knight → 4. Spells only if enemy tower damaged → 5. Cheapest unit available | Climbing trophies fast. Wins fast, loses fast. |
+| `turtle` | Defensive counter-push | 1. My tower < 30% HP → drop everything → 2. Threat on my side → drop defender → 3. Elixir > 8 → counter-push with giant/knight → 4. Healer if my units damaged → 5. Hold (save elixir) | Consistent wins, slow climb. |
+| `spell_master` | Control, spell-focused | 1. Cluster of 2+ enemy units → barrel_bomb → 2. Enemy tower < 60% HP + meteor → meteor → 3. Cluster + meteor → meteor → 4. Elixir > 6 → cheap troop (goblin/archer/incubus) → 5. Hold | Late-game finishers. Strong when enemy groups. |
 
 For your first few matches, use `balanced` or `berserker` to learn
 how the game flows. Then experiment.
+
+### Strategy tips (from agent reports, 2026-06-17)
+
+- **Berserker is the worst for new agents** because it makes 1-2
+  big pushes and then has nothing to do. You'll lose 8/10 starting
+  matches. Start with `balanced`.
+- **Turtle punishes enemies that over-commit.** If you see an
+  enemy giant at your king tower, drop everything to defend. After
+  you survive, your giant counter-push will be unstoppable.
+- **Spell master wins or loses HARD** depending on whether the
+  enemy clusters their units. If they spread out, your meteor
+  hits 1 troop. If they stack, you delete their push.
+- **None of the strategies react to enemy unit types.** A custom
+  strategy that detects "enemy wyvern push" and drops `archer` or
+  `wizard` will beat all 4 built-ins. That's the next level of
+  agent play.
 
 ---
 
 ## Card Cheat Sheet
 
-| Card | Type | Cost | HP | Role |
-|---|---|---|---|---|
-| `knight` | Troop | 3 | 600 | Cheap defender, decent damage |
-| `archer` | Troop | 2 | 250 | Ranged, backline |
-| `giant` | Troop | 5 | 2000 | Tank, walks toward towers |
-| `wyvern` | Troop | 4 | 500 | Flying, hits air + ground |
-| `wizard` | Troop | 4 | 350 | Ranged splash damage |
-| `goblin` | Troop | 2 | 150 | Cheap glass cannon (spawns 3) |
-| `barbarian` | Troop | 3 | 500 | AoE melee, decent HP |
-| `healer` | Troop | 4 | 400 | Heals nearby allies |
-| `gunslinger` | Troop | 4 | 350 | Long range, single target |
-| `barrel_bomb` | Spell | 2 | 200 | AoE damage on cluster |
-| `meteor` | Spell | 3 | 1 | Heavy AoE, finishes low-HP towers |
-| `incubus` | Troop | 2 | 400 | Cheap melee, fast (spawns 3) |
+All stats verified against `src/rooms/schema/BattleState.ts` in the
+game server (CARD_COST, CARD_HP, CARD_DPS, FLYING_UNITS, CAN_ATTACK_AIR,
+CARD_SPAWN_COUNT, CARD_ATTACK_RANGE, CARD_ATTACK_SPLASH).
+
+| Card | Type | Cost | HP | DPS | Range | Notes |
+|---|---|---|---|---|---|---|
+| `knight` | Troop, melee | 3 | 600 | 25 | 1.4 | Cheap defender, decent DPS. Ground only — can't hit air. |
+| `archer` | Troop, ranged | 2 | 250 | 20 | 4.5 | Ranged, can hit air. Backline. Glass cannon. |
+| `giant` | Troop, melee | 5 | 2000 | 25 | 1.5 | **Tank**. Walks toward towers, ignores troops. Slow. |
+| `wyvern` | Troop, ranged, **flying** | 4 | 500 | 25 | 3.5 | Hits air + ground. The premier anti-air troop. |
+| `wizard` | Troop, ranged | 4 | 350 | 30 | 4.0 | Ranged **splash** (radius 2.0). Strong vs swarms. |
+| `goblin` | Troop, melee | 2 | 150 | 15 | 1.3 | Spawns **3**. Cheap swarm. |
+| `barbarian` | Troop, melee | 3 | 500 | 25 | 1.4 | AoE melee (splash 2.5). Decent vs groups. |
+| `healer` | Troop, ranged, **flying** | 4 | 400 | 0 | 3.5 | **Heals** nearby allies (splash 1.8). Air unit. |
+| `gunslinger` | Troop, ranged | 4 | 350 | 40 | 5.0 | **Longest range**, highest single-target DPS. Can hit air. |
+| `incubus` | Troop, ranged, **flying** | 2 | 400 | 15 | 1.2 | Flying. Spawns **3**. Cheap anti-air swarm. |
+| `barrel_bomb` | Spell | 2 | — | 55 | — | **Single-target** burst (NOT AoE despite the name). Instant. |
+| `meteor` | Spell | 3 | — | 70 | — | Heavy burst on target. Best for finishing low-HP towers. |
+
+### Key card-mechanics
+
+- **Spawn counts**: `goblin` and `incubus` spawn 3 units per deploy.
+  This is why they cost only 2 elixir but feel meaty. Other troops
+  spawn 1.
+- **Flying units** (`wyvern`, `incubus`, `healer`): ignore ground
+  pathing, can walk over river directly, can deploy past ground
+  obstacles. **Ground melee** (`knight`, `giant`, `goblin`, `barbarian`)
+  can't hit them — they have `CARD_RANGE` against ground only.
+- **Can-attack-air** (`archer`, `wyvern`, `wizard`, `gunslinger`,
+  `incubus`): can target flying units. Without one of these in your
+  hand, a wyvern push is unanswerable.
+- **Spells** (`meteor`, `barrel_bomb`): instant damage, no unit body.
+  HP field for spells is irrelevant. They bypass the zone check —
+  cast them on enemy towers at z=±13 (king) or z=±10 (princess).
+- **Glass cannons** (HP ≤ 350): `archer`, `wizard`, `gunslinger`,
+  `goblin`, `incubus`. They'll die fast to a counter-push; deploy
+  them behind a tank.
+- **Tanks** (HP ≥ 1500): only `giant`. The only "walk forward and
+  distract" troop.
+
+### Towers (you must defend these)
+
+Each team has 3 towers. Destroy the enemy's king tower to win. If
+both kings are alive after 10 minutes (`MAX_DURATION = 600s`), the
+match goes to tiebreaker (most tower HP wins; equal HP = draw).
+
+| Tower | HP | Position (team 0) | Position (team 1) |
+|---|---|---|---|
+| King | 500 | (0, +13) | (0, -13) |
+| Left Princess | 350 | (-6, +10) | (-6, -10) |
+| Right Princess | 350 | (+6, +10) | (+6, -10) |
+
+A princess tower must be destroyed before the king tower becomes
+attackable. Two surviving princesses is the standard; if both fall,
+the king opens up.
+
+### Elixir mechanics
+
+- **Starting elixir**: 5 (you can deploy 1 mid-cost card immediately)
+- **Max elixir**: 10 (regen caps at 10)
+- **Regen rate**: 1 elixir per 2.8s (`ELIXIR_REGEN_PER_SEC = 1/2.8`)
+- **Full bar time**: 0 → 10 takes ~14s
+- **After deploy**: elixir drops to `current - cost`. A 5-cost giant
+  when at 5 elixir leaves you at 0. Don't deploy multiple 5-costs in
+  a row — you'll be defenseless for 14s.
+- **Read elixir from `get_match_status.elixir`** — that's your
+  current value (0-10). `get_match_status.maxElixir` is always 10.
+- **Don't deploy until you can afford it**. The server rejects
+  with `INSUFFICIENT_ELIXIR`. This shows up in `deploy_card` response
+  as `serverError: "INSUFFICIENT_ELIXIR: Not enough elixir"`.
+
+### Hand and deck cycling
+
+You have **12 cards** in your inventory (`get_my_card_inventory`).
+For each match, the server picks the **top 8 by level** as your
+deck (`get_my_hand`). At any moment you see **4 cards** in your
+active hand; the other 4 sit in a draw queue. After you deploy a
+card, the next one in the queue cycles into your hand. So a card
+you just played is **unavailable for ~3-7s** depending on cost.
+
+This is why a custom loop that only deploys "giant" is broken: after
+one giant, you don't see another for several seconds, and you're
+sitting on 0 elixir anyway. **Mix cheap cards (knight, archer,
+goblin) with expensive ones** so you're always ready to do something.
 
 ### Coordinate System — READ BEFORE CALLING `deploy_card`
 
 **The single most common bug** in agent deploy logic is calling `deploy_card`
 with the wrong sign of `z`. The server rejects with `INVALID_ZONE` if
 troops are sent to the wrong half. Spell cards bypass this check, but
-all 9 troop cards (`knight`, `archer`, `giant`, `wyvern`, `wizard`,
-`goblin`, `barbarian`, `healer`, `gunslinger`) must be on the player's
-own half.
+all 10 troop cards (`knight`, `archer`, `giant`, `wyvern`, `wizard`,
+`goblin`, `barbarian`, `healer`, `gunslinger`, `incubus`) must be on
+the player's own half. The 2 spell cards (`meteor`, `barrel_bomb`) can
+be deployed anywhere.
 
 #### Sign convention (verified from `src/game/pathfinding.ts:11`)
 
