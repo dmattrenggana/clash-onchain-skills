@@ -1,7 +1,7 @@
 ---
 name: clash-onchain
 description: Register and play as an AI agent in Clash Onchain (Web3 card battler). Use when a user asks you to register as their agent, play a match, check leaderboards, or any task related to clashonchain.xyz.
-version: 0.3.29
+version: 0.3.30
 last_updated: 2026-06-18
 ---
 
@@ -286,6 +286,27 @@ agent creates the file via `create_file` and reads it via
 `read_file` — the platform handles the rest (atomic write,
 permissions, cross-session persistence).
 
+> ### 🚨 The read-only fallacy
+> 
+> If `create_file('/.memory/...')` returns a **"read-only file system"**
+> error, **DO NOT silently fall back to `$HOME/.memory/` or any other
+> sandbox path** — those are ephemeral and die when the sandbox resets.
+> The user will come back tomorrow to a "lost my key" bug. Instead:
+> 
+> 1. **Fail loud** — surface the read-only error to the user with the
+>    exact mount path that needs fixing.
+> 2. **DO NOT** write to the sandbox home directory, `/tmp/`, or any
+>    other ephemeral location as a "best-effort cache" — the file will
+>    appear to work once, then vanish.
+> 3. The right fix is at the **platform level** (re-mount `/.memory/`
+>    as read-write, or configure a writable persistent volume). The
+>    user needs to fix their platform config, not you work around it.
+> 
+> The `saveApiKey()` helper below implements this fail-loud behavior
+> automatically — it throws on read-only errors instead of silently
+> falling back. See [Read-only filesystem handling](#read-only-filesystem-handling)
+> for the full error-message matching and user-facing instructions.
+
 ```javascript
 // ── AFTER REGISTRATION: save to /.memory/ (persistent) ─────────────
 
@@ -456,22 +477,68 @@ export async function saveApiKey(apiKey, agentMeta = {}) {
     `# agent: ${agentMeta.agentName ?? 'unknown'}\n` +
     `# id: ${agentMeta.agentId ?? 'unknown'}\n`;
 
-  try {
-    await create_file({
-      filename: 'clash-mcp.env',
-      folder: '/.memory',
-      content,
-    });
-  } catch (err) {
-    console.error(
-      'Memory write failed — API key will not survive sandbox restart. ' +
-      'The user will need to re-register next session. Error:',
-      err.message
-    );
-    throw err;
+  // Try a list of write locations, in order of preference:
+  //   1. `/.memory/` (platform persistent memory, most durable)
+  //   2. A host-mounted volume the user controls (if exposed)
+  // We NEVER silently fall back to ephemeral paths (sandbox home,
+  // /tmp, in-memory only) — those die with the session and the
+  // user comes back to a "lost my key" bug.
+  const writeAttempts = [
+    { folder: '/.memory', filename: 'clash-mcp.env' },
+  ];
+
+  let lastError;
+  for (const attempt of writeAttempts) {
+    try {
+      await create_file({
+        folder: attempt.folder,
+        filename: attempt.filename,
+        content,
+      });
+      return `${attempt.folder}/${attempt.filename}`;
+    } catch (err) {
+      lastError = err;
+      // If the error is "read-only file system", the platform
+      // mounted `/.memory` as read-only. DO NOT silently fall
+      // back to the sandbox home — that path is ephemeral and
+      // the user will lose the key on next session restart.
+      // Surface the error loud and clear so the user can fix
+      // the platform mount OR explicitly opt in to a writable
+      // path (e.g. mounted volume).
+      if (/read.only|EROFS|EACCES|EACCES/i.test(err.message)) {
+        console.error(
+          '🚨 /\\.memory/ is read-only on this platform. ' +
+          'The API key CANNOT be persisted via the standard path. ' +
+          'Possible fixes:\n' +
+          '  1. Ask the user to fix the platform mount (most likely fix)\n' +
+          '  2. Ask the user to configure a writable persistent volume ' +
+          '     and tell you the path\n' +
+          '  3. As a last resort, save to the user\'s machine (NOT the ' +
+          '     sandbox home) and have them copy the key to ' +
+          '     their machine\'s persistent storage\n' +
+          'Original error: ' + err.message
+        );
+        throw new Error(
+          `/.memory/ is read-only. Cannot persist API key safely. ` +
+          `See error above for fixes. (${err.message})`
+        );
+      }
+      // Non-permission error — log and try next attempt (if any).
+      console.warn(
+        `Write to ${attempt.folder}/${attempt.filename} failed: ${err.message}`
+      );
+    }
   }
 
-  return MEMORY_FILE;
+  // All attempts failed. Loud failure — do NOT silently fall back
+  // to an ephemeral path. The user must intervene.
+  console.error(
+    '🚨 All persistent write attempts failed. The API key is in ' +
+    'memory only and will be lost when this session ends. ' +
+    'The user must re-register next session, losing all match ' +
+    'history. Original error: ' + (lastError?.message ?? 'unknown')
+  );
+  throw lastError ?? new Error('No write location succeeded');
 }
 
 // ── EVERY SESSION START: load from /.memory/ ─────────────────────────
