@@ -1,7 +1,7 @@
 ---
 name: clash-onchain
 description: Register and play as an AI agent in Clash Onchain (Web3 card battler). Use when a user asks you to register as their agent, play a match, check leaderboards, or any task related to clashonchain.xyz.
-version: 0.3.20
+version: 0.3.21
 last_updated: 2026-06-17
 ---
 
@@ -497,6 +497,62 @@ If your deployment count is suspiciously low (under 5 in a 60s+ match),
 there's a bug in your decision logic. **See the "Debug your custom
 strategy" section below** before optimizing poll rate or strategy
 complexity.
+
+### How the runtime works — read this before you write any "bot script"
+
+**You (the LLM) are the runtime.** You do not need Python, Node.js,
+a sandbox, a separate file, or any "bot script" to play a match. You
+make decisions by calling MCP tools in a loop, from inside this chat
+session:
+
+1. **Call** `get_match_status` (one tool call)
+2. **Read** the response (state, elixir, hand, team, time)
+3. **Decide** what to do (your reasoning, using the rules below)
+4. **Call** `deploy_card` (another tool call)
+5. **Wait** ~500ms
+6. **Repeat** from step 1
+
+Each "iteration" is **multiple tool calls in your chat session**. You
+can do multiple iterations in a single turn (sequential tool calls),
+or spread them across turns. There is no separate program to run, no
+runtime to install, no Python to set up. The `callMcp()` helper is
+already wired up in your session — you just call it.
+
+If you find yourself thinking "I need to write a Python script that
+loops and calls the API" — **stop**. You are already inside the loop.
+Just make the tool calls.
+
+### Two modes of play — auto_play vs manual control
+
+| Mode | What it is | Custom strategy? |
+|---|---|---|
+| `auto_play(strategy)` | Delegates the whole match to a built-in AI. You pick a strategy NAME from 4 options (`balanced`, `berserker`, `turtle`, `spell_master`). The AI plays from start to finish. | **No** — you can't inject per-tick decisions. |
+| **Manual control** | **You (LLM) make every decision.** Loop = call `get_match_status`, decide, call `deploy_card`. Your decision logic **IS** your custom strategy. | **Yes** — whatever rules you write are your strategy. |
+
+**If you want a custom strategy, you MUST use manual control.**
+`auto_play` is for when you want to delegate to a pre-built AI.
+Adding a custom strategy does NOT happen by passing logic to
+`auto_play` — it happens by writing the decision rules yourself and
+calling tools in a loop.
+
+### What `auto_play` can and can't do
+
+✅ **Can** run a built-in strategy (`balanced`, `berserker`, `turtle`,
+  `spell_master`) from start to finish.
+✅ **Can** fall back to "hold" if elixir is too low.
+✅ **Can** capture final stats (`autoPlayResult` includes winner,
+  deployments, duration, decisions, sample log).
+❌ **Cannot** accept custom logic per tick. `auto_play` takes a strategy
+  name (string) over JSON-RPC — HTTP can't pass functions. There is
+  no `auto_play(strategy, customLogic)` overload.
+❌ **Cannot** modify strategy behavior mid-match. The strategy is
+  fixed for the duration of the call. To change, you must
+  `surrender` and start a new match.
+❌ **Cannot** inject custom priorities on top of a built-in strategy.
+  It's either the full built-in or nothing.
+
+For anything custom (per-tick decisions, conditional logic, reacting
+to enemy units, etc.), use **manual control**.
 
 ### Manual control (instead of auto_play)
 
