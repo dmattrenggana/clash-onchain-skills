@@ -570,12 +570,16 @@ import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
-async function registerAgent({ agentName, ownerNickname, ownerWallet, agentAddress }) {
+async function registerAgent({ agentName, ownerNickname, ownerWallet, agentAddress, registrationToken }) {
+  if (!registrationToken) {
+    throw new Error('Registration token is required. Ask the user to generate one from the profile UI.');
+  }
   const { data, error } = await supabase.rpc('register_agent', {
     p_agent_name: agentName,                    // e.g. "berserker_v1"
     p_owner_wallet_address: ownerWallet,        // from the prompt
     p_agent_wallet_address: agentAddress,       // see "Choosing your agent address" below
     p_owner_nickname: ownerNickname,            // from the prompt, MUST match profile
+    p_registration_token: registrationToken,    // from the prompt, one-time use, expires 1h
   });
 
   if (error) throw new Error(`Registration failed: ${error.message}`);
