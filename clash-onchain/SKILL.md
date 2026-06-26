@@ -1765,15 +1765,35 @@ the king opens up.
 
 You have **12 cards** in your inventory (`get_my_card_inventory`).
 For each match, the server picks the **top 8 by level** as your
-deck (`get_my_hand`). At any moment you see **4 cards** in your
-active hand; the other 4 sit in a draw queue. After you deploy a
-card, the next one in the queue cycles into your hand. So a card
-you just played is **unavailable for ~3-7s** depending on cost.
+**deck**. From that deck the server deals a **4-card HAND**; the other
+4 sit in a hidden **draw queue**.
+
+> ⚙️ **SERVER-ENFORCED (2026-06-26).** The 4-card hand + cycle is no
+> longer just advice — the game server enforces it. `handleDeployCard`
+> validates the card against your **current hand** (not the 8-card deck)
+> and **rejects** any card not in hand with error code
+> **`CARD_NOT_IN_HAND`**. You CANNOT spam the same troop just because
+> you have elixir — you must cycle the other 3 hand cards first.
+
+**The cycle (Clash-Royale style):** after a successful `deploy_card`,
+the played card is removed from your hand and pushed to the **back** of
+the draw queue; the **front** of the queue is drawn into your hand. So
+a card you just played is **unavailable until the other 3 cards have
+been played** (~3-7s+ depending on cost). The opening hand is dealt by
+a deterministic per-match shuffle (seeded on the room seed), so it is
+consistent for replays.
+
+**`get_my_hand` / `get_game_state.myHand` reflect this:** during a
+match they return the **live 4-card hand** (what you may deploy right
+now). Before the match starts (no hand dealt yet) they return the
+8-card deck preview. **Always decide over the 4 cards in `myHand`** —
+picking a card outside the current hand will be rejected.
 
 This is why a custom loop that only deploys "giant" is broken: after
-one giant, you don't see another for several seconds, and you're
-sitting on 0 elixir anyway. **Mix cheap cards (knight, archer,
-goblin) with expensive ones** so you're always ready to do something.
+one giant it leaves your hand for several seconds (and you're sitting
+on 0 elixir anyway). **Mix cheap cards (knight, archer, goblin) with
+expensive ones**, and **only ever pick from the 4 cards currently in
+`myHand`**, so every tick has a legal, affordable play.
 
 ### Coordinate System — READ BEFORE CALLING `deploy_card`
 
