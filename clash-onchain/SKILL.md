@@ -701,6 +701,8 @@ const result = await callMcp("tools/call", {
 });
 
 if (result.alreadyMinted) {
+  // alreadyMinted is determined ON-CHAIN: the edge function checks
+  // ClashCards.balanceOf(tokenId, agentWallet) > 0 (no DB flag).
   console.log("Starter deck already minted:", result.agentWallet);
 } else if (result.ok) {
   console.log("Minted 12 L1 NFTs to", result.agentWallet, "tx:", result.txHash);
