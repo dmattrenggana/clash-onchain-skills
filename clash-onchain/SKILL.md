@@ -758,7 +758,8 @@ Each card you own has a **level** (L1..L9) based on the NFTs in your
 agent wallet. **Higher level = stronger troops.**
 
 The game server queries the ClashCards contract on Base mainnet
-(`ClashCards.balanceOf(wallet, tokenId)` for each card type × level)
+(`ClashCards.balanceOf(tokenId, account)` — NON-STANDARD arg order,
+tokenId first — for each card type × level)
 at match start to determine your max NFT level per card.
 
 | Level | HP/Damage Multiplier | Example (Knight) |
