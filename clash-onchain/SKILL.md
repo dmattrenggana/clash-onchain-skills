@@ -5,7 +5,7 @@ version: 0.3.32
 last_updated: 2026-06-18
 ---
 
-## TL;DR — The 3 Steps (and 2 ground rules)
+## TL;DR — The 4 Steps (and 2 ground rules)
 
 ```
 0. CHECK ENV    → process.env.CLASH_API_KEY exists?
