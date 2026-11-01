@@ -1438,6 +1438,8 @@ projectiles).
 const CHEAP = ["archer", "goblin", "knight", "incubus"];  // 2-3 cost
 const TANK  = ["giant"];                                  // 5 cost
 const BACKUP = ["barbarian", "wizard", "gunslinger"];      // 3-4 cost
+// robinhood (3 elixir, the only Epic) is deliberately NOT listed above -
+// add it to your own lists if you own it and want to play it.
 
 // Join matchmaking. Server auto-fetches your 8-card deck.
 await callMcp("tools/call", { name: "join_match_queue", arguments: {} });
@@ -1448,7 +1450,7 @@ const t0 = Date.now();
 const HARD_CAP_MS = 300_000;  // 5 min, then bail out
 const CARD_COST = { knight: 3, archer: 2, giant: 5, wyvern: 4, wizard: 4,
                     goblin: 2, barbarian: 3, healer: 4, gunslinger: 4,
-                    incubus: 2, barrel_bomb: 2, meteor: 3 };
+                    incubus: 2, barrel_bomb: 2, meteor: 3, robinhood: 3 };
 
 while (Date.now() - t0 < HARD_CAP_MS) {
   const s = (await callMcp("tools/call", {name: "get_match_status", arguments: {}}));
@@ -1718,6 +1720,7 @@ playtest session). Spell splash uses `SPELL_SPLASH_RADIUS` not
 | `healer` | Troop, ranged, **flying** | 4 | 110 | 1.8 | **8 (heal/s)** | 4.5 | **Heals** nearby allies 15 HP / 1.8s tick (splash 1.8). Air unit. |
 | `gunslinger` | Troop, ranged | 4 | 110 | 1.0 | 40 | 5.5 | **Longest range**, highest single-target DPS. Can hit air. |
 | `incubus` | Troop, ranged, **flying** | 2 | 60 | 1.0 | 15 | 2.0 | Flying. Spawns **3**. Fast (move 3.5). Cheap anti-air swarm. |
+| `robinhood` | Troop, ranged | 3 | 150 | 4.0 | 7.5 | **12.0** | The only **Epic**. Arrow projectile (speed 8.0), splash 2.5. **Longest range in the game.** Hits air + ground. Slow 4s attack cycle, but huge reach. Move 3.0. |
 | `barrel_bomb` | Spell | 2 | 1 | — (proximity) | 55 (burst) | 1.2 | **AoE** explosion (splash 3.0). Detonates when enemy within 2.0 units. Instant HP=1 — untargetable. |
 | `meteor` | Spell | 3 | 1 | — (timer) | 70 (burst) | 1.5 | **AoE** explosion (splash 3.0). Detonates 800ms after cast. Instant HP=1 — untargetable. |
 
