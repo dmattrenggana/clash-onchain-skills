@@ -27,8 +27,8 @@ Match the smart contract enum exactly. Use the numeric type when calling the con
 | Numeric Type | Name | Cost ($CLASH) | Card Distribution |
 |--------------|------|----------------|--------------------|
 | **0** | **Silver Chest** | 1,000,000 $CLASH | 20 Common cards only |
-| **1** | **Gold Chest** | 3,000,000 $CLASH | 60 Common + 10 Epic (70 total) |
-| **2** | **Magical Chest** | 5,000,000 $CLASH | 120 Common + 30 Epic (150 total) |
+| **1** | **Gold Chest** | 3,000,000 $CLASH | 60 Common + 8 Rare + 2 Epic (70 total) |
+| **2** | **Magical Chest** | 5,000,000 $CLASH | 120 Common + 25 Rare + 5 Epic (150 total) |
 
 ⚠️ **CRITICAL**: Smart contract uses `uint8` for chest type. Always pass the numeric value (0, 1, or 2), not the string.
 
@@ -191,7 +191,7 @@ interface BuyChestResult {
   rewards: {
     name: string;
     count: number;
-    rarity: "common" | "epic";
+    rarity: "common" | "rare" | "epic";
   }[];
   totalCards: number;
   cost: string;  // wei
@@ -210,7 +210,7 @@ interface BuyChestResult {
   "rewards": [
     { "name": "Knight", "count": 8, "rarity": "common" },
     { "name": "Archer", "count": 12, "rarity": "common" },
-    { "name": "Giant", "count": 3, "rarity": "epic" }
+    { "name": "Giant", "count": 3, "rarity": "rare" }
   ],
   "totalCards": 70,
   "cost": "3000000000000000000000000",
@@ -316,7 +316,7 @@ Decimals: 18
 
 ## References
 
-- [Card Pools](references/card-pools.md) - Common and Epic card lists
+- [Card Pools](references/card-pools.md) - Common, Rare and Epic card lists
 - [Chest Prices](references/chest-prices.md) - Cost breakdown in wei and $CLASH
 - [Contract API](references/contract-api.md) - Smart contract ABI
 - [BankrBot API Docs](https://docs.bankr.bot/) - External API reference

@@ -132,11 +132,11 @@ const chestTypeNum = Number(decoded.args.chestType);
 
 ## Chest Type Mapping
 
-| Type Number | Type Name | Cost (wei) | Cost ($CLASH) | Common Cards | Epic Cards |
-|-------------|-----------|------------|---------------|--------------|------------|
-| 0 | Silver Chest | 1,000,000 × 10^18 | 1,000,000 | 20 | 0 |
-| 1 | Gold Chest | 3,000,000 × 10^18 | 3,000,000 | 60 | 10 |
-| 2 | Magical Chest | 5,000,000 × 10^18 | 5,000,000 | 120 | 30 |
+| Type Number | Type Name | Cost (wei) | Cost ($CLASH) | Common | Rare | Epic |
+|-------------|-----------|------------|---------------|--------|------|------|
+| 0 | Silver Chest | 1,000,000 × 10^18 | 1,000,000 | 20 | 0 | 0 |
+| 1 | Gold Chest | 3,000,000 × 10^18 | 3,000,000 | 60 | 8 | 2 |
+| 2 | Magical Chest | 5,000,000 × 10^18 | 5,000,000 | 120 | 25 | 5 |
 
 ## Transaction Flow
 
