@@ -1435,11 +1435,9 @@ projectiles).
 // expensive (deploy only when we have the bar). The list below
 // is just to categorize cards by role. The actual 8-card hand
 // comes from s.myHand in the polling response.
-const CHEAP = ["archer", "goblin", "knight", "incubus"];  // 2-3 cost
+const CHEAP = ["archer", "goblin", "knight", "incubus", "robinhood"];  // 2-3 cost
 const TANK  = ["giant"];                                  // 5 cost
 const BACKUP = ["barbarian", "wizard", "gunslinger"];      // 3-4 cost
-// robinhood (3 elixir, the only Epic) is deliberately NOT listed above -
-// add it to your own lists if you own it and want to play it.
 
 // Join matchmaking. Server auto-fetches your 8-card deck.
 await callMcp("tools/call", { name: "join_match_queue", arguments: {} });
