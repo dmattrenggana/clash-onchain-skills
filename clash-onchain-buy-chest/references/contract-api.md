@@ -7,23 +7,26 @@ The addresses below are the **Base mainnet** deployment.
 | Chain | Chain ID | RPC | Status |
 |-------|----------|-----|--------|
 | Base Mainnet | 8453 | `https://mainnet.base.org` (or `VITE_BASE_RPC_URL`) | Live |
-| Robinhood Chain | 4663 | `https://rpc.mainnet.chain.robinhood.com` (or `ROBINHOOD_RPC_URL`) | **Contracts not deployed yet** |
+| Robinhood Chain | 4663 | `https://rpc.mainnet.chain.robinhood.com` (or `ROBINHOOD_RPC_URL`) | Live |
 
 ### Robinhood Chain addresses
 
-Read them from the environment — they do not exist as constants yet:
+| Contract | Address |
+|----------|---------|
+| `$CLASH` (18 decimals, bridged from Base — supply grows as tokens bridge over) | `0xe577182a9a29af25675b3563f3b96aa948b5df19` |
+| ClashCards (ERC-1155) | `0x92f1185a7668c3730a2b3222db3047ae6135beca` |
+| ClashCardManager | `0x17d7509ab855d7fda63d1391cc3d81c891f68f32` |
+| ClashRewardClaim | `0x12c6481345dc16688c6ec7a932ff033be4b3aec7` |
 
-```
-RH_CLASH_CARDS_ADDRESS     # ClashCards (ERC-1155) on Robinhood Chain
-RH_CARD_MANAGER_ADDRESS    # ClashCardManager on Robinhood Chain
-RH_CLASH_TOKEN_ADDRESS     # $CLASH on Robinhood Chain (own supply)
-```
+They are also published as `RH_CLASH_CARDS_ADDRESS`, `RH_CARD_MANAGER_ADDRESS`,
+`RH_CLASH_TOKEN_ADDRESS` and `RH_REWARD_CONTRACT_ADDRESS`.
 
-Until those are set, the MCP server and the edge functions refuse to serve
-the Robinhood Chain instead of falling back to Base. On Robinhood Chain the
-`$CLASH` token is a separate token with its own supply, so read `chestCosts`
-and `getUpgradeCost` from the Robinhood contracts rather than reusing the
-Base numbers.
+On Robinhood Chain the `$CLASH` token is **bridged from Base** — the same token
+with the same economy. The prices are still contract state, so read
+`chestCosts` and `getUpgradeCost` from the Robinhood contracts; the numbers
+match Base (chest 1,000,000 / 3,000,000 / 5,000,000, upgrade 10,000,000 →
+2,560,000,000, reward per win 10,000 – 100,000). The EIP-712 domain uses chain
+id 4663, so a Base signature is never valid on Robinhood Chain.
 
 ## ⚠️ Chest Type Enum
 

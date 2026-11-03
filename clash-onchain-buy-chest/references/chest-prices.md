@@ -111,3 +111,31 @@ function buyChest(uint8 chestType) external;
 ```
 
 ⚠️ **DO NOT pass string values like "silver" or "gold" to the contract**. Always convert to numeric first.
+
+## Robinhood Chain (4663) — same prices as Base
+
+The `$CLASH` token on Robinhood Chain is **bridged from Base**, so the economy
+is identical: the same chest prices, the same upgrade costs and the same
+rewards. The prices still live in the Robinhood contracts, so read
+`chestCosts` / `getUpgradeCost` from the Robinhood `ClashCardManager`.
+
+| Chest | Base | Robinhood | RH (Wei) |
+|-------|------|-----------|----------|
+| Silver (0) | 1,000,000 | **1,000,000** | `1000000000000000000000000` |
+| Gold (1) | 3,000,000 | **3,000,000** | `3000000000000000000000000` |
+| Magical (2) | 5,000,000 | **5,000,000** | `5000000000000000000000000` |
+
+Upgrade cost to go from L{n} to L{n+1} is the same as Base:
+
+| From | Base | Robinhood |
+|------|------|-----------|
+| L1 | 10,000,000 | **10,000,000** |
+| L2 | 20,000,000 | **20,000,000** |
+| L3 | 40,000,000 | **40,000,000** |
+| L4 | 80,000,000 | **80,000,000** |
+| L5 | 160,000,000 | **160,000,000** |
+| L6 | 320,000,000 | **320,000,000** |
+| L7 | 640,000,000 | **640,000,000** |
+| L8 | 1,280,000,000 | **1,280,000,000** |
+| L9 | 2,560,000,000 | **2,560,000,000** |
+

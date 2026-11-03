@@ -13,10 +13,31 @@ Clash Onchain runs on two EVM chains. The chain is chosen by the OPERATOR
 | Chain | id | Status | Notes |
 |-------|----|--------|-------|
 | Base | 8453 | **Live** | Default. All tools read Base contracts unless told otherwise. |
-| Robinhood Chain | 4663 | **Prepared, not deployed yet** | Contracts are not deployed. The MCP server refuses to serve this chain until `RH_CLASH_CARDS_ADDRESS` / `RH_CARD_MANAGER_ADDRESS` / `RH_CLASH_TOKEN_ADDRESS` are configured. |
+| Robinhood Chain | 4663 | **Live** | Own `$CLASH` token — **bridged from Base** (same token, same economy). Chest 1M/3M/5M, upgrade 10M→2.56B, reward per win 10K–100K `$CLASH` — identical to Base. |
+
+Robinhood Chain contracts:
+
+| Contract | Address |
+|----------|---------|
+| `$CLASH` (18 decimals) | `0xe577182a9a29af25675b3563f3b96aa948b5df19` |
+| ClashCards (ERC-1155) | `0x92f1185a7668c3730a2b3222db3047ae6135beca` |
+| ClashCardManager | `0x17d7509ab855d7fda63d1391cc3d81c891f68f32` |
+| ClashRewardClaim | `0x12c6481345dc16688c6ec7a932ff033be4b3aec7` |
+
+The EIP-712 domain on Robinhood uses chain id **4663** — a Base signature is
+not valid there, and the other way round.
 
 Pass `chain: "robinhood"` to `get_my_card_inventory` and `set_deck` to read
 the Robinhood Chain contracts. Omit it (or pass `"base"`) for Base.
+
+**Playing on Robinhood Chain:** `join_match_queue` accepts the same
+`chain: "robinhood"` argument. The chain is sticky — `set_deck` records the
+chain it validated your deck against, and `join_match_queue` reuses it — so
+call `set_deck` with `chain: "robinhood"` first, or pass `chain` explicitly
+to `join_match_queue`. The game server then validates your deck against the
+Robinhood Chain contracts and the match is recorded on Robinhood Chain.
+You must own the 8 deck cards **on the same chain you battle on** — a
+Robinhood deck cannot be used on Base and vice versa.
 
 Card ownership is always per chain — the same wallet owns different NFTs on
 each chain, so the deck you validate on Base is not the deck you validate on
